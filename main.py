@@ -138,30 +138,30 @@ def upgraded_parse_dataset(file_path):
 file_path = os.path.join("sm", f"sm_0_1.json")
 instance = upgraded_parse_dataset(file_path)
 
-print("\n--- CHI TIẾT OPERATIONS ---")
-for operation in instance["operations"]:
-    info = instance["operation_details"][operation]
-    print(f"[{operation}] | Job: {info['job']} | Type: {info['type']} | Class: {info['class_name']}")
-    print(f"  <- Cần làm sau (Predecessors): {instance['predecessors'][operation]}")
-    print(f"  -> Làm xong sẽ mở khóa (Successors): {instance['successors'][operation]}")
-    print(f"  - Các máy thực hiện được: {instance['eligible_machines'][operation]}")
-    print(f"  - Chi tiết thời gian: {instance['processing_times'][operation]}\n")
+# print("\n--- CHI TIẾT OPERATIONS ---")
+# for operation in instance["operations"]:
+#     info = instance["operation_details"][operation]
+#     print(f"[{operation}] | Job: {info['job']} | Type: {info['type']} | Class: {info['class_name']}")
+#     print(f"  <- Cần làm sau (Predecessors): {instance['predecessors'][operation]}")
+#     print(f"  -> Làm xong sẽ mở khóa (Successors): {instance['successors'][operation]}")
+#     print(f"  - Các máy thực hiện được: {instance['eligible_machines'][operation]}")
+#     print(f"  - Chi tiết thời gian: {instance['processing_times'][operation]}\n")
+#
+# print("--- THÔNG TIN SETUP & TRANSPORT MẪU ---")
+# r_list = instance["resources"]
+# if len(r_list) >= 2:
+#     r1, r2 = r_list[0], r_list[1]
+#     t_time = instance["transport_times"].get(r1, {}).get(r2, 0)
+#     print(f"Thời gian vận chuyển từ {r1} -> {r2}: {t_time} giây")
+#
+# types = instance["operation_types"]
+# if len(types) >= 2 and len(r_list) >= 1:
+#     t1, t2, m = types[0], types[1], r_list[0]
+#     s_time = instance["setup_times"].get(t1, {}).get(t2, {}).get(m, "Không hỗ trợ/0")
+#     print(f"Thời gian setup trên {m} khi chuyển từ {t1} -> {t2}: {s_time}")
+# print("=" * 60)
 
-print("--- THÔNG TIN SETUP & TRANSPORT MẪU ---")
-r_list = instance["resources"]
-if len(r_list) >= 2:
-    r1, r2 = r_list[0], r_list[1]
-    t_time = instance["transport_times"].get(r1, {}).get(r2, 0)
-    print(f"Thời gian vận chuyển từ {r1} -> {r2}: {t_time} giây")
-
-types = instance["operation_types"]
-if len(types) >= 2 and len(r_list) >= 1:
-    t1, t2, m = types[0], types[1], r_list[0]
-    s_time = instance["setup_times"].get(t1, {}).get(t2, {}).get(m, "Không hỗ trợ/0")
-    print(f"Thời gian setup trên {m} khi chuyển từ {t1} -> {t2}: {s_time}")
-print("=" * 60)
-
-#Rang buoc EO
+#Rang buoc EO 4.2
 def EO_operation(instance):
     var_map = {}
     clauses = [] #menh de de may sat xu ly
@@ -173,12 +173,102 @@ def EO_operation(instance):
     for op, machine in instance["eligible_machines"].items():
         #Id cac mayy thuc hien duoc op nay
         m_id = [var_map[(op, m)] for m in machine]
-        clauses.append(m.ids) #ALO
-    #AMO
-    for i in range(len(m_id)):
-        for j in range(i+1, len(m_id)):
-            clauses.append([-m_id[i], -m_id[j]])
+        clauses.append(m_id) #ALO
+        #AMO
+        for i in range(len(m_id)):
+            for j in range(i+1, len(m_id)):
+                clauses.append([-m_id[i], -m_id[j]])
     return clauses, var_map
-##
+
+#Test EO
+EO_test= EO_operation(instance)
+clause, var_map = EO_test[0], EO_test[1]
+print(clause)
+print(var_map)
+
+# x_var 4.1
+def encode_time_constraints(instance, UB, start_id=1):
+    x_var = {}
+    s_var = {}
+    clauses = []
+    cur_id = start_id
+
+    # ID cho x va s
+    for op in instance["operations"]:
+        for t in range(0, UB + 2):  # xet den UB +1 de tim chan tren
+            x_var[(op, t)] = cur_id
+            cur_id += 1
+        for t in range(0, UB + 1):
+            s_var[(op, t)] = cur_id
+            cur_id += 1
+
+    ###CNF
+    for op in instance["operations"]:
+        # bien >= 0 va ko >= UB + 1
+        clauses.append([x_var[(op, 0)]])
+        clauses.append([-x_var[(op, UB + 1)]])
+
+        for t in range(0, UB + 1):
+            x_t = x_var[(op, t)]
+            x_next = x_var[(op, t + 1)]
+            s_t = s_var[(op, t)]
+
+            #x_(t+1) -> x_t
+            clauses.append([-x_next, x_t])
+
+            # s_t <=> x_t ∧ -x_(t+1)
+            clauses.append([-s_t, x_t])
+            clauses.append([-s_t, -x_next])
+            clauses.append([-x_t, x_next, s_t])
+    return clauses, x_var, s_var, cur_id
+
+## UB va CMax 4.5
+def UB_and_Cmax(instance, m_var, x_var, buffer_per_op=10):
+    total_processing_time = 0
+    for time in instance["processing_times"].values():
+        total_processing_time += max(time.values())
+    UB = total_processing_time + len(instance["operations"]) * buffer_per_op
+    Cmax_clause = []
+    for op in instance["operations"]:
+        if len(instance["successors"][op]) == 0: # xet nguyen cong cuoi cung khong co thang lien truoc
+            for m in instance["eligible_machines"][op]:
+                processing_ik = instance["processing_times"][op][m]
+                t_banned = UB - processing_ik + 1 #thoi gian bi cam bat dau
+                machine_id = m_var[(op,m)]
+                if (op, t_banned) in x_var:
+                    x_id = x_var[op, t_banned]
+                    Cmax_clause.append([-machine_id, -x_id])
+                elif t_banned <= 0:
+                    Cmax_clause.append([-machine_id])
+    return UB, Cmax_clause
+
+# Test UB và cmax
+# 1. Lay m_var tu ham EO
+eo_clauses, m_var = EO_operation(instance)
+
+# 2. Tinh UB truoc de sinh bang bien x_var
+tong_p = sum(max(t.values()) for t in instance["processing_times"].values())
+buffer = 10
+ub_est = tong_p + len(instance["operations"]) * buffer
+
+# 3. Sinh bien thoi gian x_var va s_var theo UB
+start_id = len(m_var) + 1
+time_clauses, x_var, s_var, next_id = encode_time_constraints(instance, ub_est, start_id)
+
+# 4. Goi ham kiem tra UB_and_Cmax
+UB, cmax_clauses = UB_and_Cmax(instance, m_var, x_var, buffer_per_op=buffer)
+
+# 5. In ket qua ra man hinh
+print("=" * 50)
+print("KET QUA TEST UB VA CMAX:")
+print("Gia tri UB:", UB)
+print("Tong so menh de Cmax:", len(cmax_clauses))
+
+# In thu 5 menh de Cmax dau tien
+print("\n5 menh de Cmax mau:")
+for c in cmax_clauses[:5]:
+    print(c)
+
+
 
 
