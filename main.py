@@ -179,6 +179,6 @@ def EO_operation(instance):
         for j in range(i+1, len(m_id)):
             clauses.append([-m_id[i], -m_id[j]])
     return clauses, var_map
-
+##
 
 
