@@ -268,7 +268,7 @@ print("Tong so menh de Cmax:", len(cmax_clauses))
 print("\n5 menh de Cmax mau:")
 for c in cmax_clauses[:5]:
     print(c)
-
+#
 
 
 
