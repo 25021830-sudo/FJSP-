@@ -161,6 +161,7 @@ instance = upgraded_parse_dataset(file_path)
 #     print(f"Thời gian setup trên {m} khi chuyển từ {t1} -> {t2}: {s_time}")
 # print("=" * 60)
 
+#Bruh
 #Rang buoc EO 4.2
 def EO_operation(instance):
     var_map = {}
@@ -269,6 +270,5 @@ print("\n5 menh de Cmax mau:")
 for c in cmax_clauses[:5]:
     print(c)
 #
-
 
 
