@@ -235,7 +235,7 @@ def encode_time_constraints(instance, UB, start_id=1):
 
     # ID cho x va s
     for op in instance["operations"]:
-        for t in range(0, UB + 2):  # xet den UB +1 de tim chan tren
+        for t in range(0, UB + 1):  # xet den UB +1 de tim chan tren
             x_var[(op, t)] = cur_id
             cur_id += 1
         for t in range(0, UB + 1):
