@@ -1,6 +1,8 @@
 import json
 import os
 from collections import deque
+import time
+from pysat.solvers import Solver
 
 #file data json thi dung luon thu vien
 def parse_dataset(file_path):
@@ -504,32 +506,69 @@ def encode_cmax(instance, m_var, x_var, UB):
                     clauses.append([-m_id])
     return clauses
 
-# Test UB và cmax
-# 1. Lay m_var tu ham EO
-eo_clauses, m_var = EO_operation(instance)
+#main
+def main():
+    file_path = os.path.join("sm", "sm_0_1.json")
+    if not os.path.exists(file_path):
+        file_path = "sm_0_1.json"
 
-# 2. Tinh UB truoc de sinh bang bien x_var
-tong_p = sum(max(t.values()) for t in instance["processing_times"].values())
-buffer = 10
-ub_est = tong_p + len(instance["operations"]) * buffer
+    print(f"=== BẮT ĐẦU CHẠY THUẬT TOÁN CHO FILE: {file_path} ===")
+    instance = upgraded_parse_dataset(file_path)
+    ub = get_ub(instance)
+    print(f"1. Upper Bound (UB) khởi tạo: {ub}")
+    ES, LS, domains = pre_processing(instance, ub)
+    print("2. Tiền xử lý hoàn tất (Đã tính ES, LS và Domain Reduction).")
+    eo_clauses, m_var = EO_operation(instance)
+    time_clauses, x_var, s_var, next_id = encode_time_constraints(instance, ub, start_id=len(m_var) + 1)
+    y_var = {}
 
-# 3. Sinh bien thoi gian x_var va s_var theo UB
-start_id = len(m_var) + 1
-time_clauses, x_var, s_var, next_id = encode_time_constraints(instance, ub_est, start_id)
+    c43 = precedence_constraints(instance, m_var, x_var, s_var, ub)
+    c44 = setup_and_non_overlap(instance, m_var, x_var, s_var, y_var, ub)
+    c45 = assembly_constraints(instance, m_var, x_var, s_var, y_var, ub)
+    c46 = encode_cmax(instance, m_var, x_var, ub)
 
-# 4. Goi ham kiem tra UB_and_Cmax
-UB, cmax_clauses = UB_and_Cmax(instance, m_var, x_var, buffer_per_op=buffer)
+    all_clauses = eo_clauses + time_clauses + c43 + c44 + c45 + c46
+    print(f"3. Sinh tổng cộng {len(all_clauses)} mệnh đề CNF.")
 
-# 5. In ket qua ra man hinh
-print("=" * 50)
-print("KET QUA TEST UB VA CMAX:")
-print("Gia tri UB:", UB)
-print("Tong so menh de Cmax:", len(cmax_clauses))
+    solver = Solver(name='cadical195')
+    for clause in all_clauses:
+        solver.add_clause(clause)
 
-# In thu 5 menh de Cmax dau tien
-print("\n5 menh de Cmax mau:")
-for c in cmax_clauses[:5]:
-    print(c)
-#
+    start_time = time.perf_counter()
+    is_sat = solver.solve()
+    exec_time = time.perf_counter() - start_time
 
+    print("\n==================================================")
+    if is_sat:
+        model = set(solver.get_model())
+        print(f"TRẠNG THÁI: TÌM THẤY LỊCH TRÌNH KHẢ THI (SAT)")
+        print(f"Thời gian giải SAT Solver: {exec_time:.2f} giây")
+        print("--------------------------------------------------")
+
+        cmax_actual = 0
+        for op in instance["operations"]:
+            assigned_m = next((m for m in instance["eligible_machines"][op] if m_var[(op, m)] in model), None)
+
+            start_t = next((t for t in range(ub + 1) if s_var[(op, t)] in model), None)
+
+            p_time = instance["processing_times"][op].get(assigned_m, 0) if assigned_m else 0
+            finish_t = start_t + p_time if start_t is not None else None
+
+            if finish_t:
+                cmax_actual = max(cmax_actual, finish_t)
+
+            print(
+                f"[{op:20s}] -> Máy: {str(assigned_m):12s} | Start: {str(start_t):3s} | Process: {p_time:2d} | Finish: {str(finish_t):3s}")
+
+        print("--------------------------------------------------")
+        print(f"🎯 Makespan (Cmax) đạt được: {cmax_actual}")
+    else:
+        print("TRẠNG THÁI: VÔ NGHIỆM (UNSAT)")
+    print("==================================================")
+
+    solver.delete()
+
+
+if __name__ == "__main__":
+    main()
 
