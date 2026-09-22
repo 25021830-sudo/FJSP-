@@ -1,5 +1,6 @@
 import json
 import os
+from collections import deque
 
 #file data json thi dung luon thu vien
 def parse_dataset(file_path):
@@ -161,6 +162,68 @@ instance = upgraded_parse_dataset(file_path)
 #     print(f"Thời gian setup trên {m} khi chuyển từ {t1} -> {t2}: {s_time}")
 # print("=" * 60)
 
+#Ham xu ly ban dau
+def pre_processing(instance, UB):
+    operations = instance["operations"]
+    predecessors = instance["predecessors"]
+    successors = instance["successors"]
+    proc_times = instance["processing_times"]
+    eligible_machines = instance["eligible_machines"]
+    details = instance["operation_details"]
+    setup_times = instance["setup_times"]
+    transport_times = instance["transport_times"]
+
+    def get_p_min_op(op):
+        return min(proc_times[op].values()) if proc_times[op] else 0
+
+    def get_p_min_trans(u, v):
+        type_u = details[u]["type"]
+        type_v = details[v]["type"]
+        delays = []
+        for k1 in eligible_machines[u]:
+            p1 = proc_times[u][k1]
+            for k2 in eligible_machines[v]:
+                if k1 != k2:
+                    tt = transport_times.get(k1, {}).get(k2, 0)
+                    delays.append(p1 + tt)
+                else:
+                    st = setup_times.get(type_u, {}).get(type_v, {}).get(k1, 0)
+                    delays.append(p1 + st)
+        return min(delays) if delays else get_p_min_op(u)
+
+    in_degree = {op: len(predecessors[op]) for op in operations}
+    q = deque([op for op in operations if in_degree[op] == 0])
+    topo = []
+    while q:
+        u = q.popleft()
+        topo.append(u)
+        for v in successors[u]:
+            in_degree[v] -= 1
+            if in_degree[v] == 0:
+                q.append(v)
+
+    ES = {op: 0 for op in operations}
+    for u in topo:
+        for v in successors[u]:
+            dt = get_p_min_trans(u, v)
+            if ES[u] + dt > ES[v]:
+                ES[v] = ES[u] + dt
+
+    LS = {op: float('inf') for op in operations}
+    for op in operations:
+        if not successors[op]:
+            LS[op] = UB - get_p_min_op(op)
+
+    for u in reversed(topo):
+        for v in successors[u]:
+            dt = get_p_min_trans(u, v)
+            if LS[v] - dt < LS[u]:
+                LS[u] = LS[v] - dt
+
+    domains = {op: range(int(ES[op]), int(LS[op]) + 1) for op in operations}
+
+    return ES, LS, domains
+
 #Bruh
 #Rang buoc EO 4.2
 def EO_operation(instance):
@@ -205,7 +268,7 @@ def encode_time_constraints(instance, UB, start_id=1):
 
     ###CNF
     for op in instance["operations"]:
-        # bien >= 0 va ko >= UB + 1
+        # bien bat dau sau >= 0 va <= UB
         clauses.append([x_var[(op, 0)]])
         clauses.append([-x_var[(op, UB + 1)]])
 
@@ -216,8 +279,7 @@ def encode_time_constraints(instance, UB, start_id=1):
 
             #x_(t+1) -> x_t
             clauses.append([-x_next, x_t])
-
-            # s_t <=> x_t ∧ -x_(t+1)
+            # s_t <=> x_t ∧ -x_(t+1) giai thich ca 2 chieu
             clauses.append([-s_t, x_t])
             clauses.append([-s_t, -x_next])
             clauses.append([-x_t, x_next, s_t])
