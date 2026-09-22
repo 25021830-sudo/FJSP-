@@ -244,6 +244,39 @@ def EO_operation(instance):
                 clauses.append([-m_id[i], -m_id[j]])
     return clauses, var_map
 
+#code rang buoc precedence 4.3
+def encode_precedence_constraints(instance, m_var, x_var, s_var, UB):
+    clauses = []
+    details = instance["operation_details"]
+    setup_times = instance["setup_times"]
+    transport_times = instance["transport_times"]
+
+    for u in instance["operations"]:
+        type_u = details[u]["type"]
+        for v in instance["successors"][u]:
+            type_v = details[v]["type"]
+            for t in range(0, UB + 1):
+                if (u, t) not in s_var:
+                    continue
+                s_ut = s_var[(u, t)]
+                for k1 in instance["eligible_machines"][u]:
+                    m_u1 = m_var[(u, k1)]
+                    p_u1 = instance["processing_times"][u][k1]
+                    for k2 in instance["eligible_machines"][v]:
+                        m_v2 = m_var[(v, k2)]
+                        if k1 != k2:
+                            tt = transport_times.get(k1, {}).get(k2, 0)
+                            t_target = t + p_u1 + tt
+                        else:
+                            st = setup_times.get(type_u, {}).get(type_v, {}).get(k1, 0)
+                            t_target = t + p_u1 + st
+
+                        if (v, t_target) in x_var:
+                            clauses.append([-s_ut, -m_u1, -m_v2, x_var[(v, t_target)]])
+                        elif t_target > UB + 1:
+                            clauses.append([-s_ut, -m_u1, -m_v2])
+    return clauses
+
 #Test EO
 EO_test= EO_operation(instance)
 clause, var_map = EO_test[0], EO_test[1]
