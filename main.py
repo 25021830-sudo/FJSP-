@@ -224,65 +224,6 @@ def pre_processing(instance, UB):
 
     return ES, LS, domains
 
-#Bruh
-#Rang buoc EO 4.2
-def EO_operation(instance):
-    var_map = {}
-    clauses = [] #menh de de may sat xu ly
-    #gan tung may voi id tang dan
-    for op, machine in instance["eligible_machines"].items():
-        for m in machine:
-            var_map[(op,m)] = len(var_map) + 1
-    #clause cho AMO, ALO => EO
-    for op, machine in instance["eligible_machines"].items():
-        #Id cac mayy thuc hien duoc op nay
-        m_id = [var_map[(op, m)] for m in machine]
-        clauses.append(m_id) #ALO
-        #AMO
-        for i in range(len(m_id)):
-            for j in range(i+1, len(m_id)):
-                clauses.append([-m_id[i], -m_id[j]])
-    return clauses, var_map
-
-#code rang buoc precedence 4.3
-def encode_precedence_constraints(instance, m_var, x_var, s_var, UB):
-    clauses = []
-    details = instance["operation_details"]
-    setup_times = instance["setup_times"]
-    transport_times = instance["transport_times"]
-
-    for u in instance["operations"]:
-        type_u = details[u]["type"]
-        for v in instance["successors"][u]:
-            type_v = details[v]["type"]
-            for t in range(0, UB + 1):
-                if (u, t) not in s_var:
-                    continue
-                s_ut = s_var[(u, t)]
-                for k1 in instance["eligible_machines"][u]:
-                    m_u1 = m_var[(u, k1)]
-                    p_u1 = instance["processing_times"][u][k1]
-                    for k2 in instance["eligible_machines"][v]:
-                        m_v2 = m_var[(v, k2)]
-                        if k1 != k2:
-                            tt = transport_times.get(k1, {}).get(k2, 0)
-                            t_target = t + p_u1 + tt
-                        else:
-                            st = setup_times.get(type_u, {}).get(type_v, {}).get(k1, 0)
-                            t_target = t + p_u1 + st
-
-                        if (v, t_target) in x_var:
-                            clauses.append([-s_ut, -m_u1, -m_v2, x_var[(v, t_target)]])
-                        elif t_target > UB + 1:
-                            clauses.append([-s_ut, -m_u1, -m_v2])
-    return clauses
-
-#Test EO
-EO_test= EO_operation(instance)
-clause, var_map = EO_test[0], EO_test[1]
-print(clause)
-print(var_map)
-
 # x_var 4.1
 def encode_time_constraints(instance, UB, start_id=1):
     x_var = {}
@@ -318,25 +259,250 @@ def encode_time_constraints(instance, UB, start_id=1):
             clauses.append([-x_t, x_next, s_t])
     return clauses, x_var, s_var, cur_id
 
-## UB va CMax 4.5
-def UB_and_Cmax(instance, m_var, x_var, buffer_per_op=10):
-    total_processing_time = 0
-    for time in instance["processing_times"].values():
-        total_processing_time += max(time.values())
-    UB = total_processing_time + len(instance["operations"]) * buffer_per_op
-    Cmax_clause = []
+#Bruh
+#Rang buoc EO 4.2
+def EO_operation(instance):
+    var_map = {}
+    clauses = [] #menh de de may sat xu ly
+    #gan tung may voi id tang dan
+    for op, machine in instance["eligible_machines"].items():
+        for m in machine:
+            var_map[(op,m)] = len(var_map) + 1
+    #clause cho AMO, ALO => EO
+    for op, machine in instance["eligible_machines"].items():
+        #Id cac mayy thuc hien duoc op nay
+        m_id = [var_map[(op, m)] for m in machine]
+        clauses.append(m_id) #ALO
+        #AMO
+        for i in range(len(m_id)):
+            for j in range(i+1, len(m_id)):
+                clauses.append([-m_id[i], -m_id[j]])
+    return clauses, var_map
+
+#Test EO
+EO_test= EO_operation(instance)
+clause, var_map = EO_test[0], EO_test[1]
+print(clause)
+print(var_map)
+
+#code rang buoc precedence 4.3
+def precedence_constraints(instance, m_var, x_var, s_var, UB):
+    clauses = []
+    details = instance["operation_details"]
+    setup_times = instance["setup_times"]
+    transport_times = instance["transport_times"]
+
+    for u in instance["operations"]:
+        type_u = details[u]["type"]
+        for v in instance["successors"][u]:
+            type_v = details[v]["type"]
+            for t in range(0, UB + 1):
+                if (u, t) not in s_var:
+                    continue
+                s_ut = s_var[(u, t)]
+                for k1 in instance["eligible_machines"][u]:
+                    m_u1 = m_var[(u, k1)]
+                    p_u1 = instance["processing_times"][u][k1]
+                    for k2 in instance["eligible_machines"][v]:
+                        m_v2 = m_var[(v, k2)]
+                        if k1 != k2:
+                            tt = transport_times.get(k1, {}).get(k2, 0)
+                            t_target = t + p_u1 + tt
+                        else:
+                            st = setup_times.get(type_u, {}).get(type_v, {}).get(k1, 0)
+                            t_target = t + p_u1 + st
+
+                        if (v, t_target) in x_var:
+                            clauses.append([-s_ut, -m_u1, -m_v2, x_var[(v, t_target)]])
+                        elif t_target > UB + 1:
+                            clauses.append([-s_ut, -m_u1, -m_v2])
+    return clauses
+
+# rang buoc setup time va chong chat tren may
+def setup_and_non_overlap(instance, m_var, x_var, s_var, y_var, UB):
+    clauses = []
+    operations = instance["operations"]
+    details = instance["operation_details"]
+    proc_times = instance["processing_times"]
+    setup_times = instance["setup_times"]
+    eligible_machines = instance["eligible_machines"]
+
+    reachable = set()
+    for op in operations:
+        stack = list(instance["successors"][op])
+        while stack:
+            curr = stack.pop()
+            if (op, curr) not in reachable:
+                reachable.add((op, curr))
+                stack.extend(instance["successors"][curr])
+
+    for idx1 in range(len(operations)):
+        u = operations[idx1]
+        type_u = details[u]["type"]
+        machines_u = set(eligible_machines[u])
+
+        for idx2 in range(idx1 + 1, len(operations)):
+            v = operations[idx2]
+
+            if (u, v) in reachable or (v, u) in reachable:
+                continue
+
+            common_machines = machines_u.intersection(eligible_machines[v])
+            if not common_machines:
+                continue
+
+            if (u, v) not in y_var:
+                y_var[(u, v)] = len(m_var) + len(s_var) + len(y_var) + 1
+            y_uv = y_var[(u, v)]
+
+            type_v = details[v]["type"]
+
+            for k in common_machines:
+                m_uk = m_var[(u, k)]
+                m_vk = m_var[(v, k)]
+                p_uk = proc_times[u][k]
+                p_vk = proc_times[v][k]
+                st_uv = setup_times.get(type_u, {}).get(type_v, {}).get(k, 0)
+                st_vu = setup_times.get(type_v, {}).get(type_u, {}).get(k, 0)
+
+                for t in range(0, UB + 1):
+                    if (u, t) in s_var:
+                        s_ut = s_var[(u, t)]
+                        t_target = t + p_uk + st_uv
+                        if (v, t_target) in x_var:
+                            clauses.append([-m_uk, -m_vk, -y_uv, -s_ut, x_var[(v, t_target)]])
+                        elif t_target > UB + 1:
+                            clauses.append([-m_uk, -m_vk, -y_uv, -s_ut])
+
+                for t in range(0, UB + 1):
+                    if (v, t) in s_var:
+                        s_vt = s_var[(v, t)]
+                        t_target = t + p_vk + st_vu
+                        if (u, t_target) in x_var:
+                            clauses.append([-m_uk, -m_vk, y_uv, -s_vt, x_var[(u, t_target)]])
+                        elif t_target > UB + 1:
+                            clauses.append([-m_uk, -m_vk, y_uv, -s_vt])
+
+    return clauses
+
+#Xu ly tuyen tinh lien may
+def assembly_constraints(instance, m_var, x_var, s_var, y_var, UB):
+    clauses = []
+    ops = instance["operations"]
+    details = instance["operation_details"]
+    proc_times = instance["processing_times"]
+    setup_times = instance["setup_times"]
+    transport_times = instance["transport_times"]
+    eligible = instance["eligible_machines"]
+    classes = instance.get("operation_classes", {})
+
+    reachable = set()
+    for op in ops:
+        stack = list(instance["successors"][op])
+        while stack:
+            curr = stack.pop()
+            if (op, curr) not in reachable:
+                reachable.add((op, curr))
+                stack.extend(instance["successors"][curr])
+
+    job_asm = {}
+    for op in ops:
+        if classes.get(op, details[op].get("class", 0)) == 1:
+            job_asm.setdefault(details[op]["job"], []).append(op)
+
+    for asm in job_asm.values():
+        for i in range(len(asm)):
+            u = asm[i]
+            type_u = details[u]["type"]
+            for j in range(i + 1, len(asm)):
+                v = asm[j]
+                if (u, v) in reachable or (v, u) in reachable:
+                    continue
+
+                y_uv = y_var.setdefault((u, v), len(m_var) + len(s_var) + len(y_var) + 1)
+                type_v = details[v]["type"]
+
+                for k1 in eligible[u]:
+                    m_u1, p_u1 = m_var[(u, k1)], proc_times[u][k1]
+                    for k2 in eligible[v]:
+                        m_v2, p_v2 = m_var[(v, k2)], proc_times[v][k2]
+                        dt_uv = setup_times.get(type_u, {}).get(type_v, {}).get(k1,0) if k1 == k2 else transport_times.get(k1, {}).get(k2, 0)
+                        dt_vu = setup_times.get(type_v, {}).get(type_u, {}).get(k1,0) if k1 == k2 else transport_times.get(k2, {}).get(k1, 0)
+                        for t in range(UB + 1):
+                            if (u, t) in s_var:
+                                tgt = t + p_u1 + dt_uv
+                                if (v, tgt) in x_var:
+                                    clauses.append([-m_u1, -m_v2, -y_uv, -s_var[(u, t)], x_var[(v, tgt)]])
+                                elif tgt > UB + 1:
+                                    clauses.append([-m_u1, -m_v2, -y_uv, -s_var[(u, t)]])
+
+                            if (v, t) in s_var:
+                                tgt = t + p_v2 + dt_vu
+                                if (u, tgt) in x_var:
+                                    clauses.append([-m_u1, -m_v2, y_uv, -s_var[(v, t)], x_var[(u, tgt)]])
+                                elif tgt > UB + 1:
+                                    clauses.append([-m_u1, -m_v2, y_uv, -s_var[(v, t)]])
+
+    return clauses
+
+#Tinh UB
+def get_ub(instance):
+    ops = instance["operations"]
+    succs = instance["successors"]
+    preds = instance["predecessors"]
+    proc = instance["processing_times"]
+    eligible = instance["eligible_machines"]
+    details = instance["operation_details"]
+    setup = instance["setup_times"]
+
+    in_degree = {op: len(preds[op]) for op in ops}
+    ready = [op for op in ops if in_degree[op] == 0]
+
+    m_free = {m: 0 for m in instance["resources"]}
+    m_last_type = {m: "k0" for m in instance["resources"]}
+    op_end = {}
+    op_mach = {}
+
+    while ready:
+        op = ready.pop(0)
+        type_op = details[op]["type"]
+
+        pred_ready_time = max((op_end[p] for p in preds[op]), default=0)
+
+        best_m, best_end = None, float('inf')
+        for m in eligible[op]:
+            st = setup.get(m_last_type[m], {}).get(type_op, {}).get(m, 0)
+            avail = max(m_free[m], pred_ready_time) + st
+            end = avail + proc[op][m]
+            if end < best_end:
+                best_m, best_end = m, end
+
+        op_mach[op] = best_m
+        op_end[op] = best_end
+        m_free[best_m] = best_end
+        m_last_type[best_m] = type_op
+
+        for v in succs[op]:
+            in_degree[v] -= 1
+            if in_degree[v] == 0:
+                ready.append(v)
+
+    return max(op_end.values())
+
+#CMAX
+def encode_cmax(instance, m_var, x_var, UB):
+    clauses = []
     for op in instance["operations"]:
-        if len(instance["successors"][op]) == 0: # xet nguyen cong cuoi cung khong co thang lien truoc
+        if len(instance["successors"][op]) == 0:
             for m in instance["eligible_machines"][op]:
-                processing_ik = instance["processing_times"][op][m]
-                t_banned = UB - processing_ik + 1 #thoi gian bi cam bat dau
-                machine_id = m_var[(op,m)]
+                p_ik = instance["processing_times"][op][m]
+                t_banned = UB - p_ik + 1
+                m_id = m_var[(op, m)]
                 if (op, t_banned) in x_var:
-                    x_id = x_var[op, t_banned]
-                    Cmax_clause.append([-machine_id, -x_id])
+                    clauses.append([-m_id, -x_var[(op, t_banned)]])
                 elif t_banned <= 0:
-                    Cmax_clause.append([-machine_id])
-    return UB, Cmax_clause
+                    clauses.append([-m_id])
+    return clauses
 
 # Test UB và cmax
 # 1. Lay m_var tu ham EO
