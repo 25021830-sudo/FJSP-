@@ -138,8 +138,8 @@ def upgraded_parse_dataset(file_path):
 
 #test ham to
 
-file_path = os.path.join("sm", f"sm_0_1.json")
-instance = upgraded_parse_dataset(file_path)
+# file_path = os.path.join("sm", f"sm_0_1.json")
+# instance = upgraded_parse_dataset(file_path)
 
 # print("\n--- CHI TIẾT OPERATIONS ---")
 # for operation in instance["operations"]:
@@ -233,32 +233,32 @@ def encode_time_constraints(instance, UB, start_id=1):
     clauses = []
     cur_id = start_id
 
-    # ID cho x va s
+    # 1. Khởi tạo biến x_var và s_var đồng bộ từ 0 đến UB + 1 (dùng range(0, UB + 2))
     for op in instance["operations"]:
-        for t in range(0, UB + 1):  # xet den UB +1 de tim chan tren
+        for t in range(0, UB + 2):
             x_var[(op, t)] = cur_id
             cur_id += 1
-        for t in range(0, UB + 1):
+        for t in range(0, UB + 2):
             s_var[(op, t)] = cur_id
             cur_id += 1
 
-    ###CNF
+    # 2. Sinh các mệnh đề CNF (Order Encoding)
     for op in instance["operations"]:
-        # bien bat dau sau >= 0 va <= UB
-        clauses.append([x_var[(op, 0)]])
-        clauses.append([-x_var[(op, UB + 1)]])
+        # Ràng buộc biên
+        clauses.append([x_var[(op, 0)]])         # Bắt đầu tại hoặc trước t=0
+        clauses.append([-x_var[(op, UB + 1)]])  # Cấm hoàn toàn việc bắt đầu sau UB (tại UB + 1)
 
+        # Ràng buộc tính đơn điệu & Mối quan hệ giữa x_var và s_var
         for t in range(0, UB + 1):
             x_t = x_var[(op, t)]
             x_next = x_var[(op, t + 1)]
             s_t = s_var[(op, t)]
 
-            #x_(t+1) -> x_t
-            clauses.append([-x_next, x_t])
-            # s_t <=> x_t ∧ -x_(t+1) giai thich ca 2 chieu
-            clauses.append([-s_t, x_t])
-            clauses.append([-s_t, -x_next])
-            clauses.append([-x_t, x_next, s_t])
+            clauses.append([-x_next, x_t])      # x(t+1) -> x(t)
+            clauses.append([-s_t, x_t])         # s(t) -> x(t)
+            clauses.append([-s_t, -x_next])     # s(t) -> NOT x(t+1)
+            clauses.append([-x_t, x_next, s_t]) # (x(t) AND NOT x(t+1)) -> s(t)
+
     return clauses, x_var, s_var, cur_id
 
 #Bruh
@@ -281,11 +281,11 @@ def EO_operation(instance):
                 clauses.append([-m_id[i], -m_id[j]])
     return clauses, var_map
 
-#Test EO
-EO_test= EO_operation(instance)
-clause, var_map = EO_test[0], EO_test[1]
-print(clause)
-print(var_map)
+# #Test EO
+# EO_test= EO_operation(instance)
+# clause, var_map = EO_test[0], EO_test[1]
+# print(clause)
+# print(var_map)
 
 #code rang buoc precedence 4.3
 def precedence_constraints(instance, m_var, x_var, s_var, UB):
