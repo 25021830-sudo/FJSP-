@@ -1,98 +1,67 @@
 import json
 import os
-from collections import deque
 import time
+from collections import deque
 from pysat.solvers import Solver
 
-#file data json thi dung luon thu vien
-def parse_dataset(file_path):
+
+# ======================= PARSE (giữ nguyên logic cũ) =======================
+def parse_dataset(file_path, verbose=False):
     with open(file_path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    jobs = data["jobs"]
-    resources = data["resources"]
-    operations = data["operations"]
-    ## IN TEST phần này
-    print(f"--- {os.path.basename(file_path)} ---")
-    print(f"Tổng số Jobs: {len(jobs)} -> {jobs}")
-    print(f"Tổng số Resources (máy): {len(resources)} -> {resources}")
-    print(f"Tổng số operations: {len(operations)}")
-    return data #tra ve du lieu
+    if verbose:
+        print(f"--- {os.path.basename(file_path)} ---")
+        print(f"Jobs: {len(data['jobs'])} | Resources: {len(data['resources'])} | Ops: {len(data['operations'])}")
+    return data
 
 
-#lay thong tin ve nguyen cong
 def get_operation_details(data):
-    operations = data["operations"]
     operation_jobs = data["operations_jobs"]
     operation_types = data["operations_operation_types"]
     operation_classes = data["operation_classes"]
     parse_operations = {}
-    for operation in operations:
-        job = operation_jobs[operation]
-        operation_type = operation_types[operation]
+    for operation in data["operations"]:
         is_assembly = operation_classes.get(operation, 1)
-        parse_operations[operation] = { #nhet vao trong parse_operations duoi dang json
-            "job": job,
-            "type": operation_type,
+        parse_operations[operation] = {
+            "job": operation_jobs[operation],
+            "type": operation_types[operation],
             "is_assembly": is_assembly,
-            "class_name": "Assembly" if is_assembly == 1 else "Component" #toan tu 3 ngoi
+            "class_name": "Assembly" if is_assembly == 1 else "Component",
         }
     return parse_operations
 
 
-#lay danh sach cac op theo trinh tu
 def get_precedence(data):
     operations = data["operations"]
-    preccedence_data = data.get("precedence_constraints", {})
-
-    predecessors = {op: [] for op in operations} #thang
+    precedence_data = data.get("precedence_constraints", {})
+    predecessors = {op: [] for op in operations}
     successors = {op: [] for op in operations}
-
-    for job, job_matrix in preccedence_data.items():
+    for job, job_matrix in precedence_data.items():
         for u, successor_dict in job_matrix.items():
-            if u not in operations:
+            if u not in successors:
                 continue
             for v, is_before in successor_dict.items():
-                if is_before == 1 and v in operations:
-                    successors[u].append(v)     # u phải xong trước v
-                    predecessors[v].append(u)   # v phải đợi u xong
+                if is_before == 1 and v in successors:
+                    successors[u].append(v)
+                    predecessors[v].append(u)
     return predecessors, successors
 
 
-#lay thoi gian gia cong
 def get_processing_times(data):
-    operations = data["operations"]
-    raw_processing_times = data.get("processing_times", {})
-
-    # thoi gian gia cong tren tung may
-    proc_times = {}
-    # DS may co the chay duoc operation nao
-    eligible_machines = {}
-
-    for op in operations:
-        # dict cac may thuc hien duoc op nay
-        m_times = raw_processing_times.get(op, {})
+    raw = data.get("processing_times", {})
+    proc_times, eligible_machines = {}, {}
+    for op in data["operations"]:
+        m_times = raw.get(op, {})
         proc_times[op] = m_times
         eligible_machines[op] = list(m_times.keys())
-
     return proc_times, eligible_machines
 
 
-#lay thoi gian setup va van chhuyem
-def get_setup_and_transport(data):
-    setup_times = data.get("setup_times", {})
-    transport_times = data.get("transport_times", {})
-    return setup_times, transport_times
-
-
-#tong hop het cac ham
-def upgraded_parse_dataset(file_path):
-    data = parse_dataset(file_path) #1
-    operation_details = get_operation_details(data) #2
-    predecessors, successors = get_precedence(data) #3
-    processing_times, eligible_machines = get_processing_times(data) #4
-    setup_times, transport_times = get_setup_and_transport(data) #5
-
-    #goi lai toan bo thong tin
+def upgraded_parse_dataset(file_path, verbose=False):
+    data = parse_dataset(file_path, verbose)
+    operation_details = get_operation_details(data)
+    predecessors, successors = get_precedence(data)
+    processing_times, eligible_machines = get_processing_times(data)
     return {
         "raw_data": data,
         "jobs": data["jobs"],
@@ -104,97 +73,77 @@ def upgraded_parse_dataset(file_path):
         "successors": successors,
         "processing_times": processing_times,
         "eligible_machines": eligible_machines,
-        "setup_times": setup_times,
-        "transport_times": transport_times,
-        "blocked_times": data.get("blocked_times", {})
+        "setup_times": data.get("setup_times", {}),
+        "transport_times": data.get("transport_times", {}),
+        "blocked_times": data.get("blocked_times", {}),
     }
 
-#Test cac ham con
-# for i in range(1,2):
-#     file_test = os.path.join("sm", f"sm_0_{i}.json")
-#     data = parse_dataset(file_test)
-#     results = get_operation_details(data)
-#     predecessors, successors = get_precedence(data)
-#     processing_times, eligible_machines = get_processing_times(data)
-#     setup_times, transport_times = get_setup_and_transport(data)
-#     resource_list = data["resources"]
-#     types = data["operation_types"]
-#     for operation in data["operations"]:
-#         print(f"{operation}:")
-#         info = results[operation]
-#         print(f"operation: {operation} | Job: {info['job']} | Type: {info['type']} | Class: {info['class_name']}")
-#         print(f"  <- Cần làm sau (Predecessors): {predecessors[operation]}")
-#         print(f"  -> Làm xong sẽ mở khóa (Successors): {successors[operation]}")
-#         print(f"  - Các máy thực hiện được: {eligible_machines[operation]}")
-#         print(f"  - Chi tiết thời gian: {processing_times[operation]}")
-#         print("\n--- KIỂM TRA SETUP & TRANSPORT TIMES ---")
-#         r1, r2 = resource_list[0], resource_list[1]
-#         t_time = transport_times.get(r1, {}).get(r2, 0)
-#         print(f"Thời gian vận chuyển từ {r1} -> {r2}: {t_time} giây")
-#         t1, t2, m = types[0], types[1], resource_list[0]
-#         s_time = setup_times.get(t1, {}).get(t2, {}).get(m, "Không hỗ trợ/Không đổi")
-#         print(f"Thời gian setup trên {m} khi chuyển từ {t1} -> {t2}: {s_time}")
-#         print("\n")
 
-#test ham to
+# ======================= HÀM DÙNG CHUNG (MỚI) =======================
+def st_time(instance, type_a, type_b, k):
+    return instance["setup_times"].get(type_a, {}).get(type_b, {}).get(k, 0)
 
-# file_path = os.path.join("sm", f"sm_0_1.json")
-# instance = upgraded_parse_dataset(file_path)
 
-# print("\n--- CHI TIẾT OPERATIONS ---")
-# for operation in instance["operations"]:
-#     info = instance["operation_details"][operation]
-#     print(f"[{operation}] | Job: {info['job']} | Type: {info['type']} | Class: {info['class_name']}")
-#     print(f"  <- Cần làm sau (Predecessors): {instance['predecessors'][operation]}")
-#     print(f"  -> Làm xong sẽ mở khóa (Successors): {instance['successors'][operation]}")
-#     print(f"  - Các máy thực hiện được: {instance['eligible_machines'][operation]}")
-#     print(f"  - Chi tiết thời gian: {instance['processing_times'][operation]}\n")
-#
-# print("--- THÔNG TIN SETUP & TRANSPORT MẪU ---")
-# r_list = instance["resources"]
-# if len(r_list) >= 2:
-#     r1, r2 = r_list[0], r_list[1]
-#     t_time = instance["transport_times"].get(r1, {}).get(r2, 0)
-#     print(f"Thời gian vận chuyển từ {r1} -> {r2}: {t_time} giây")
-#
-# types = instance["operation_types"]
-# if len(types) >= 2 and len(r_list) >= 1:
-#     t1, t2, m = types[0], types[1], r_list[0]
-#     s_time = instance["setup_times"].get(t1, {}).get(t2, {}).get(m, "Không hỗ trợ/0")
-#     print(f"Thời gian setup trên {m} khi chuyển từ {t1} -> {t2}: {s_time}")
-# print("=" * 60)
+def tt_time(instance, k1, k2):
+    return instance["transport_times"].get(k1, {}).get(k2, 0)
 
-#Ham xu ly ban dau
+
+def delay_between(instance, type_a, k1, type_b, k2):
+    """Độ trễ giữa end(a) và start(b): setup nếu cùng máy, transport nếu khác máy."""
+    if k1 == k2:
+        return st_time(instance, type_a, type_b, k1)
+    return tt_time(instance, k1, k2)
+
+
+def compute_reachable(instance):
+    """Tập (u, v) sao cho có đường đi u -> ... -> v trong DAG."""
+    reachable = set()
+    for op in instance["operations"]:
+        stack = list(instance["successors"][op])
+        while stack:
+            cur = stack.pop()
+            if (op, cur) not in reachable:
+                reachable.add((op, cur))
+                stack.extend(instance["successors"][cur])
+    return reachable
+
+
+def add_geq(clauses, prefix, x_var, op, t, UB):
+    """Thêm mệnh đề: prefix ∨ (start_op >= t)."""
+    if t > UB + 1:                      # start >= t là bất khả thi -> chỉ còn prefix
+        clauses.append(prefix)
+    else:
+        clauses.append(prefix + [x_var[(op, t)]])
+
+
+def get_y(y_var, y_base, u, v):
+    """Cấp id cho y(u,v), id nằm SAU toàn bộ biến m, x, s."""
+    if (u, v) not in y_var:
+        y_var[(u, v)] = y_base + len(y_var)
+    return y_var[(u, v)]
+
+
+# ======================= PRE-PROCESSING =======================
 def pre_processing(instance, UB):
     operations = instance["operations"]
     predecessors = instance["predecessors"]
     successors = instance["successors"]
     proc_times = instance["processing_times"]
-    eligible_machines = instance["eligible_machines"]
+    eligible = instance["eligible_machines"]
     details = instance["operation_details"]
-    setup_times = instance["setup_times"]
-    transport_times = instance["transport_times"]
 
-    def get_p_min_op(op):
+    def p_min_op(op):
         return min(proc_times[op].values()) if proc_times[op] else 0
 
-    def get_p_min_trans(u, v):
-        type_u = details[u]["type"]
-        type_v = details[v]["type"]
-        delays = []
-        for k1 in eligible_machines[u]:
-            p1 = proc_times[u][k1]
-            for k2 in eligible_machines[v]:
-                if k1 != k2:
-                    tt = transport_times.get(k1, {}).get(k2, 0)
-                    delays.append(p1 + tt)
-                else:
-                    st = setup_times.get(type_u, {}).get(type_v, {}).get(k1, 0)
-                    delays.append(p1 + st)
-        return min(delays) if delays else get_p_min_op(u)
+    gap = {}
+    for u in operations:
+        for v in successors[u]:
+            gaps = [proc_times[u][k1] + delay_between(instance, details[u]["type"], k1, details[v]["type"], k2)
+                    for k1 in eligible[u] for k2 in eligible[v]]
+            gap[(u, v)] = min(gaps) if gaps else p_min_op(u)
 
     in_degree = {op: len(predecessors[op]) for op in operations}
-    q = deque([op for op in operations if in_degree[op] == 0])
+    q = deque(op for op in operations if in_degree[op] == 0)
     topo = []
     while q:
         u = q.popleft()
@@ -203,286 +152,198 @@ def pre_processing(instance, UB):
             in_degree[v] -= 1
             if in_degree[v] == 0:
                 q.append(v)
+    if len(topo) != len(operations):
+        raise ValueError("Đồ thị precedence có chu trình")
 
     ES = {op: 0 for op in operations}
     for u in topo:
         for v in successors[u]:
-            dt = get_p_min_trans(u, v)
-            if ES[u] + dt > ES[v]:
-                ES[v] = ES[u] + dt
+            ES[v] = max(ES[v], ES[u] + gap[(u, v)])
 
-    LS = {op: float('inf') for op in operations}
-    for op in operations:
-        if not successors[op]:
-            LS[op] = UB - get_p_min_op(op)
-
+    LS = {op: UB - p_min_op(op) for op in operations}
     for u in reversed(topo):
         for v in successors[u]:
-            dt = get_p_min_trans(u, v)
-            if LS[v] - dt < LS[u]:
-                LS[u] = LS[v] - dt
+            LS[u] = min(LS[u], LS[v] - gap[(u, v)])
 
-    domains = {op: range(int(ES[op]), int(LS[op]) + 1) for op in operations}
+    for op in operations:
+        if ES[op] > LS[op]:
+            raise ValueError(f"UB={UB} quá chặt: ES({op})={ES[op]} > LS({op})={LS[op]}")
+    return ES, LS
 
-    return ES, LS, domains
 
-# x_var 4.1
-def encode_time_constraints(instance, UB, start_id=1):
-    x_var = {}
-    s_var = {}
-    clauses = []
+# ======================= 4.1 =======================
+def encode_time_constraints(instance, UB, ES, LS, start_id=1):
+    x_var, s_var, clauses = {}, {}, []
     cur_id = start_id
-
-    # 1. Khởi tạo biến x_var và s_var đồng bộ từ 0 đến UB + 1 (dùng range(0, UB + 2))
     for op in instance["operations"]:
-        for t in range(0, UB + 2):
+        for t in range(0, UB + 2):      # x: 0..UB+1
             x_var[(op, t)] = cur_id
             cur_id += 1
-        for t in range(0, UB + 2):
+        for t in range(0, UB + 1):      # s: 0..UB (bỏ s(UB+1) vô nghĩa)
             s_var[(op, t)] = cur_id
             cur_id += 1
 
-    # 2. Sinh các mệnh đề CNF (Order Encoding)
     for op in instance["operations"]:
-        # Ràng buộc biên
-        clauses.append([x_var[(op, 0)]])         # Bắt đầu tại hoặc trước t=0
-        clauses.append([-x_var[(op, UB + 1)]])  # Cấm hoàn toàn việc bắt đầu sau UB (tại UB + 1)
-
-        # Ràng buộc tính đơn điệu & Mối quan hệ giữa x_var và s_var
+        clauses.append([x_var[(op, ES[op])]])        # start >= ES
+        clauses.append([-x_var[(op, LS[op] + 1)]])   # start <= LS
         for t in range(0, UB + 1):
-            x_t = x_var[(op, t)]
-            x_next = x_var[(op, t + 1)]
-            s_t = s_var[(op, t)]
-
-            clauses.append([-x_next, x_t])      # x(t+1) -> x(t)
-            clauses.append([-s_t, x_t])         # s(t) -> x(t)
-            clauses.append([-s_t, -x_next])     # s(t) -> NOT x(t+1)
-            clauses.append([-x_t, x_next, s_t]) # (x(t) AND NOT x(t+1)) -> s(t)
-
+            x_t, x_next, s_t = x_var[(op, t)], x_var[(op, t + 1)], s_var[(op, t)]
+            clauses.append([-x_next, x_t])
+            clauses.append([-s_t, x_t])
+            clauses.append([-s_t, -x_next])
+            clauses.append([-x_t, x_next, s_t])
     return clauses, x_var, s_var, cur_id
 
-#Bruh
-#Rang buoc EO 4.2
+
+# ======================= 4.2 (giữ nguyên) =======================
 def EO_operation(instance):
-    var_map = {}
-    clauses = [] #menh de de may sat xu ly
-    #gan tung may voi id tang dan
-    for op, machine in instance["eligible_machines"].items():
-        for m in machine:
-            var_map[(op,m)] = len(var_map) + 1
-    #clause cho AMO, ALO => EO
-    for op, machine in instance["eligible_machines"].items():
-        #Id cac mayy thuc hien duoc op nay
-        m_id = [var_map[(op, m)] for m in machine]
-        clauses.append(m_id) #ALO
-        #AMO
-        for i in range(len(m_id)):
-            for j in range(i+1, len(m_id)):
-                clauses.append([-m_id[i], -m_id[j]])
+    var_map, clauses = {}, []
+    for op, machines in instance["eligible_machines"].items():
+        for m in machines:
+            var_map[(op, m)] = len(var_map) + 1
+    for op, machines in instance["eligible_machines"].items():
+        ids = [var_map[(op, m)] for m in machines]
+        clauses.append(ids)
+        for i in range(len(ids)):
+            for j in range(i + 1, len(ids)):
+                clauses.append([-ids[i], -ids[j]])
     return clauses, var_map
 
-# #Test EO
-# EO_test= EO_operation(instance)
-# clause, var_map = EO_test[0], EO_test[1]
-# print(clause)
-# print(var_map)
 
-#code rang buoc precedence 4.3
-def precedence_constraints(instance, m_var, x_var, s_var, UB):
+# ======================= 4.3 =======================
+def precedence_constraints(instance, m_var, x_var, s_var, ES, LS, UB):
     clauses = []
     details = instance["operation_details"]
-    setup_times = instance["setup_times"]
-    transport_times = instance["transport_times"]
-
+    proc = instance["processing_times"]
     for u in instance["operations"]:
-        type_u = details[u]["type"]
         for v in instance["successors"][u]:
-            type_v = details[v]["type"]
-            for t in range(0, UB + 1):
-                if (u, t) not in s_var:
-                    continue
-                s_ut = s_var[(u, t)]
-                for k1 in instance["eligible_machines"][u]:
-                    m_u1 = m_var[(u, k1)]
-                    p_u1 = instance["processing_times"][u][k1]
-                    for k2 in instance["eligible_machines"][v]:
-                        m_v2 = m_var[(v, k2)]
-                        if k1 != k2:
-                            tt = transport_times.get(k1, {}).get(k2, 0)
-                            t_target = t + p_u1 + tt
-                        else:
-                            st = setup_times.get(type_u, {}).get(type_v, {}).get(k1, 0)
-                            t_target = t + p_u1 + st
-
-                        if (v, t_target) in x_var:
-                            clauses.append([-s_ut, -m_u1, -m_v2, x_var[(v, t_target)]])
-                        elif t_target > UB + 1:
-                            clauses.append([-s_ut, -m_u1, -m_v2])
+            for k1 in instance["eligible_machines"][u]:
+                p_u = proc[u][k1]
+                for k2 in instance["eligible_machines"][v]:
+                    dt = delay_between(instance, details[u]["type"], k1, details[v]["type"], k2)
+                    for t in range(ES[u], LS[u] + 1):
+                        prefix = [-s_var[(u, t)], -m_var[(u, k1)], -m_var[(v, k2)]]
+                        add_geq(clauses, prefix, x_var, v, t + p_u + dt, UB)   # x(v, t+p+dt)  (đã sửa)
     return clauses
 
-# rang buoc setup time va chong chat tren may
-def setup_and_non_overlap(instance, m_var, x_var, s_var, y_var, UB):
-    clauses = []
-    operations = instance["operations"]
-    details = instance["operation_details"]
-    proc_times = instance["processing_times"]
-    setup_times = instance["setup_times"]
-    eligible_machines = instance["eligible_machines"]
 
-    reachable = set()
-    for op in operations:
-        stack = list(instance["successors"][op])
-        while stack:
-            curr = stack.pop()
-            if (op, curr) not in reachable:
-                reachable.add((op, curr))
-                stack.extend(instance["successors"][curr])
-
-    for idx1 in range(len(operations)):
-        u = operations[idx1]
-        type_u = details[u]["type"]
-        machines_u = set(eligible_machines[u])
-
-        for idx2 in range(idx1 + 1, len(operations)):
-            v = operations[idx2]
-
-            if (u, v) in reachable or (v, u) in reachable:
-                continue
-
-            common_machines = machines_u.intersection(eligible_machines[v])
-            if not common_machines:
-                continue
-
-            if (u, v) not in y_var:
-                y_var[(u, v)] = len(m_var) + len(s_var) + len(y_var) + 1
-            y_uv = y_var[(u, v)]
-
-            type_v = details[v]["type"]
-
-            for k in common_machines:
-                m_uk = m_var[(u, k)]
-                m_vk = m_var[(v, k)]
-                p_uk = proc_times[u][k]
-                p_vk = proc_times[v][k]
-                st_uv = setup_times.get(type_u, {}).get(type_v, {}).get(k, 0)
-                st_vu = setup_times.get(type_v, {}).get(type_u, {}).get(k, 0)
-
-                for t in range(0, UB + 1):
-                    if (u, t) in s_var:
-                        s_ut = s_var[(u, t)]
-                        t_target = t + p_uk + st_uv
-                        if (v, t_target) in x_var:
-                            clauses.append([-m_uk, -m_vk, -y_uv, -s_ut, x_var[(v, t_target)]])
-                        elif t_target > UB + 1:
-                            clauses.append([-m_uk, -m_vk, -y_uv, -s_ut])
-
-                for t in range(0, UB + 1):
-                    if (v, t) in s_var:
-                        s_vt = s_var[(v, t)]
-                        t_target = t + p_vk + st_vu
-                        if (u, t_target) in x_var:
-                            clauses.append([-m_uk, -m_vk, y_uv, -s_vt, x_var[(u, t_target)]])
-                        elif t_target > UB + 1:
-                            clauses.append([-m_uk, -m_vk, y_uv, -s_vt])
-
-    return clauses
-
-#Xu ly tuyen tinh lien may
-def assembly_constraints(instance, m_var, x_var, s_var, y_var, UB):
+# ======================= 4.4 =======================
+def setup_and_non_overlap(instance, m_var, x_var, s_var, y_var, y_base, ES, LS, UB, reachable):
     clauses = []
     ops = instance["operations"]
     details = instance["operation_details"]
-    proc_times = instance["processing_times"]
-    setup_times = instance["setup_times"]
-    transport_times = instance["transport_times"]
+    proc = instance["processing_times"]
     eligible = instance["eligible_machines"]
-    classes = instance.get("operation_classes", {})
 
-    reachable = set()
-    for op in ops:
-        stack = list(instance["successors"][op])
-        while stack:
-            curr = stack.pop()
-            if (op, curr) not in reachable:
-                reachable.add((op, curr))
-                stack.extend(instance["successors"][curr])
+    for i in range(len(ops)):
+        u = ops[i]
+        for j in range(i + 1, len(ops)):
+            v = ops[j]
+            if (u, v) in reachable or (v, u) in reachable:
+                continue
+            common = set(eligible[u]) & set(eligible[v])
+            if not common:
+                continue
+            y_uv = get_y(y_var, y_base, u, v)
+            type_u, type_v = details[u]["type"], details[v]["type"]
+            for k in common:
+                m_uk, m_vk = m_var[(u, k)], m_var[(v, k)]
+                d_uv = proc[u][k] + st_time(instance, type_u, type_v, k)
+                d_vu = proc[v][k] + st_time(instance, type_v, type_u, k)
+                for t in range(ES[u], LS[u] + 1):   # u trước v
+                    add_geq(clauses, [-m_uk, -m_vk, -y_uv, -s_var[(u, t)]], x_var, v, t + d_uv, UB)
+                for t in range(ES[v], LS[v] + 1):   # v trước u
+                    add_geq(clauses, [-m_uk, -m_vk, y_uv, -s_var[(v, t)]], x_var, u, t + d_vu, UB)
+    return clauses
+
+
+# ======================= 4.5 =======================
+def assembly_constraints(instance, m_var, x_var, s_var, y_var, y_base, ES, LS, UB, reachable):
+    clauses = []
+    details = instance["operation_details"]
+    proc = instance["processing_times"]
+    eligible = instance["eligible_machines"]
 
     job_asm = {}
-    for op in ops:
-        if classes.get(op, details[op].get("class", 0)) == 1:
+    for op in instance["operations"]:
+        if details[op]["is_assembly"] == 1:          # đã sửa: trước đây luôn rỗng
             job_asm.setdefault(details[op]["job"], []).append(op)
 
     for asm in job_asm.values():
         for i in range(len(asm)):
             u = asm[i]
-            type_u = details[u]["type"]
             for j in range(i + 1, len(asm)):
                 v = asm[j]
                 if (u, v) in reachable or (v, u) in reachable:
                     continue
-
-                y_uv = y_var.setdefault((u, v), len(m_var) + len(s_var) + len(y_var) + 1)
-                type_v = details[v]["type"]
-
+                y_uv = get_y(y_var, y_base, u, v)
                 for k1 in eligible[u]:
-                    m_u1, p_u1 = m_var[(u, k1)], proc_times[u][k1]
                     for k2 in eligible[v]:
-                        m_v2, p_v2 = m_var[(v, k2)], proc_times[v][k2]
-                        dt_uv = setup_times.get(type_u, {}).get(type_v, {}).get(k1,0) if k1 == k2 else transport_times.get(k1, {}).get(k2, 0)
-                        dt_vu = setup_times.get(type_v, {}).get(type_u, {}).get(k1,0) if k1 == k2 else transport_times.get(k2, {}).get(k1, 0)
-                        for t in range(UB + 1):
-                            if (u, t) in s_var:
-                                tgt = t + p_u1 + dt_uv
-                                if (v, tgt) in x_var:
-                                    clauses.append([-m_u1, -m_v2, -y_uv, -s_var[(u, t)], x_var[(v, tgt)]])
-                                elif tgt > UB + 1:
-                                    clauses.append([-m_u1, -m_v2, -y_uv, -s_var[(u, t)]])
-
-                            if (v, t) in s_var:
-                                tgt = t + p_v2 + dt_vu
-                                if (u, tgt) in x_var:
-                                    clauses.append([-m_u1, -m_v2, y_uv, -s_var[(v, t)], x_var[(u, tgt)]])
-                                elif tgt > UB + 1:
-                                    clauses.append([-m_u1, -m_v2, y_uv, -s_var[(v, t)]])
-
+                        if k1 == k2:                 # cùng máy: 4.4 đã lo
+                            continue
+                        m1, m2 = m_var[(u, k1)], m_var[(v, k2)]
+                        d_uv = proc[u][k1] + tt_time(instance, k1, k2)
+                        d_vu = proc[v][k2] + tt_time(instance, k2, k1)
+                        for t in range(ES[u], LS[u] + 1):
+                            add_geq(clauses, [-m1, -m2, -y_uv, -s_var[(u, t)]], x_var, v, t + d_uv, UB)
+                        for t in range(ES[v], LS[v] + 1):
+                            add_geq(clauses, [-m1, -m2, y_uv, -s_var[(v, t)]], x_var, u, t + d_vu, UB)
     return clauses
 
-#Tinh UB
+
+# ======================= 4.6 =======================
+def encode_cmax(instance, m_var, x_var, UB):
+    clauses = []
+    for op in instance["operations"]:
+        if not instance["successors"][op]:
+            for m in instance["eligible_machines"][op]:
+                t_banned = UB - instance["processing_times"][op][m] + 1
+                if t_banned <= 0:
+                    clauses.append([-m_var[(op, m)]])
+                else:
+                    clauses.append([-m_var[(op, m)], -x_var[(op, t_banned)]])
+    return clauses
+
+
+# ======================= UB (viết lại cho đúng mô hình) =======================
 def get_ub(instance):
     ops = instance["operations"]
-    succs = instance["successors"]
-    preds = instance["predecessors"]
-    proc = instance["processing_times"]
-    eligible = instance["eligible_machines"]
+    succs, preds = instance["successors"], instance["predecessors"]
+    proc, eligible = instance["processing_times"], instance["eligible_machines"]
     details = instance["operation_details"]
-    setup = instance["setup_times"]
 
     in_degree = {op: len(preds[op]) for op in ops}
-    ready = [op for op in ops if in_degree[op] == 0]
-
-    m_free = {m: 0 for m in instance["resources"]}
-    m_last_type = {m: "k0" for m in instance["resources"]}
-    op_end = {}
-    op_mach = {}
+    ready = deque(op for op in ops if in_degree[op] == 0)
+    op_start, op_end, op_mach = {}, {}, {}
+    mach_ops = {m: [] for m in instance["resources"]}
+    asm_by_job = {}
 
     while ready:
-        op = ready.pop(0)
-        type_op = details[op]["type"]
+        op = ready.popleft()
+        type_op, job = details[op]["type"], details[op]["job"]
+        is_asm = details[op]["is_assembly"] == 1
 
-        pred_ready_time = max((op_end[p] for p in preds[op]), default=0)
-
-        best_m, best_end = None, float('inf')
+        best = None
         for m in eligible[op]:
-            st = setup.get(m_last_type[m], {}).get(type_op, {}).get(m, 0)
-            avail = max(m_free[m], pred_ready_time) + st
-            end = avail + proc[op][m]
-            if end < best_end:
-                best_m, best_end = m, end
+            start = 0
+            for p in preds[op]:                                   # precedence (transport / setup)
+                dt = delay_between(instance, details[p]["type"], op_mach[p], type_op, m)
+                start = max(start, op_end[p] + dt)
+            for u in mach_ops[m]:                                 # mọi cặp trên cùng máy (setup)
+                start = max(start, op_end[u] + st_time(instance, details[u]["type"], type_op, m))
+            if is_asm:                                            # assembly cùng job nối tiếp
+                for u in asm_by_job.get(job, []):
+                    dt = delay_between(instance, details[u]["type"], op_mach[u], type_op, m)
+                    start = max(start, op_end[u] + dt)
+            end = start + proc[op][m]
+            if best is None or end < best[0]:
+                best = (end, start, m)
 
-        op_mach[op] = best_m
-        op_end[op] = best_end
-        m_free[best_m] = best_end
-        m_last_type[best_m] = type_op
+        end, start, m = best
+        op_start[op], op_end[op], op_mach[op] = start, end, m
+        mach_ops[m].append(op)
+        if is_asm:
+            asm_by_job.setdefault(job, []).append(op)
 
         for v in succs[op]:
             in_degree[v] -= 1
@@ -491,84 +352,162 @@ def get_ub(instance):
 
     return max(op_end.values())
 
-#CMAX
-def encode_cmax(instance, m_var, x_var, UB):
-    clauses = []
+
+# ======================= DECODE + VERIFY (MỚI) =======================
+def decode_solution(model_set, instance, m_var, x_var, s_var, ub):
+    """Đọc model SAT -> {op: {machine, start, end}} và kiểm tra tính nhất quán của biến."""
+    sol, errors = {}, []
+    proc = instance["processing_times"]
     for op in instance["operations"]:
-        if len(instance["successors"][op]) == 0:
-            for m in instance["eligible_machines"][op]:
-                p_ik = instance["processing_times"][op][m]
-                t_banned = UB - p_ik + 1
-                m_id = m_var[(op, m)]
-                if (op, t_banned) in x_var:
-                    clauses.append([-m_id, -x_var[(op, t_banned)]])
-                elif t_banned <= 0:
-                    clauses.append([-m_id])
-    return clauses
+        ms = [m for m in instance["eligible_machines"][op] if m_var[(op, m)] in model_set]
+        ts = [t for t in range(ub + 1) if s_var[(op, t)] in model_set]
+        if len(ms) != 1:
+            errors.append(f"[{op}] gán {len(ms)} máy: {ms}")
+        if len(ts) != 1:
+            errors.append(f"[{op}] có {len(ts)} thời điểm bắt đầu: {ts}")
+        if len(ts) == 1:
+            t0 = ts[0]
+            for t in range(ub + 2):                 # x(t) phải đúng bằng (t <= start)
+                if (x_var[(op, t)] in model_set) != (t <= t0):
+                    errors.append(f"[{op}] x_var không khớp s_var tại t={t} (start={t0})")
+                    break
+        if len(ms) == 1 and len(ts) == 1:
+            sol[op] = {"machine": ms[0], "start": ts[0], "end": ts[0] + proc[op][ms[0]]}
+    return sol, errors
 
-#main
-def main():
-    file_path = os.path.join("sm", "sm_0_1.json")
-    if not os.path.exists(file_path):
-        file_path = "sm_0_1.json"
 
-    print(f"=== BẮT ĐẦU CHẠY THUẬT TOÁN CHO FILE: {file_path} ===")
+def verify_solution(instance, sol, ub=None, ES=None, LS=None):
+    """Kiểm tra lịch decode được có thoả MỌI ràng buộc của bài toán hay không (độc lập với CNF)."""
+    errors = []
+    ops = instance["operations"]
+    details = instance["operation_details"]
+    reachable = compute_reachable(instance)
+
+    if len(sol) != len(ops):
+        errors.append(f"Thiếu operation trong lịch: {len(sol)}/{len(ops)}")
+        return False, errors, None
+
+    # 0. miền hợp lệ
+    for op in ops:
+        s = sol[op]
+        if s["machine"] not in instance["eligible_machines"][op]:
+            errors.append(f"[{op}] máy {s['machine']} không tương thích")
+        if s["start"] < 0:
+            errors.append(f"[{op}] start < 0")
+        if ub is not None and s["end"] > ub:
+            errors.append(f"[{op}] end={s['end']} > UB={ub}")
+        if ES is not None and not (ES[op] <= s["start"] <= LS[op]):
+            errors.append(f"[{op}] start={s['start']} ngoài [ES,LS]=[{ES[op]},{LS[op]}]")
+
+    def gap(a, b):  # độ trễ tối thiểu end(a) -> start(b)
+        return delay_between(instance, details[a]["type"], sol[a]["machine"],
+                             details[b]["type"], sol[b]["machine"])
+
+    # 1. precedence
+    for u in ops:
+        for v in instance["successors"][u]:
+            need = sol[u]["end"] + gap(u, v)
+            if sol[v]["start"] < need:
+                errors.append(f"[PREC] {u}->{v}: start({v})={sol[v]['start']} < {need}")
+
+    # 2. không chồng lấp + setup trên cùng máy
+    by_machine = {}
+    for op in ops:
+        by_machine.setdefault(sol[op]["machine"], []).append(op)
+    for m, lst in by_machine.items():
+        for i in range(len(lst)):
+            for j in range(i + 1, len(lst)):
+                a, b = lst[i], lst[j]
+                ab = sol[b]["start"] >= sol[a]["end"] + gap(a, b)
+                ba = sol[a]["start"] >= sol[b]["end"] + gap(b, a)
+                if (a, b) in reachable or (b, a) in reachable:
+                    ab = sol[b]["start"] >= sol[a]["end"]      # đã có chuỗi precedence, chỉ cần không chồng
+                    ba = sol[a]["start"] >= sol[b]["end"]
+                if not (ab or ba):
+                    errors.append(f"[MACHINE {m}] {a} và {b} chồng lấp / thiếu setup")
+
+    # 3. assembly cùng job phải tuyến tính (kể cả khác máy)
+    job_asm = {}
+    for op in ops:
+        if details[op]["is_assembly"] == 1:
+            job_asm.setdefault(details[op]["job"], []).append(op)
+    for job, lst in job_asm.items():
+        for i in range(len(lst)):
+            for j in range(i + 1, len(lst)):
+                a, b = lst[i], lst[j]
+                if (a, b) in reachable or (b, a) in reachable:
+                    continue
+                ab = sol[b]["start"] >= sol[a]["end"] + gap(a, b)
+                ba = sol[a]["start"] >= sol[b]["end"] + gap(b, a)
+                if not (ab or ba):
+                    errors.append(f"[ASSEMBLY {job}] {a} và {b} không nối tiếp")
+
+    cmax = max(s["end"] for s in sol.values())
+    return len(errors) == 0, errors, cmax
+
+
+# ======================= GIẢI 1 LẦN VỚI UB =======================
+def build_and_solve(instance, ub):
+    try:
+        ES, LS = pre_processing(instance, ub)
+    except ValueError:
+        return "UNSAT", None, None, None
+    eo_clauses, m_var = EO_operation(instance)
+    time_clauses, x_var, s_var, next_id = encode_time_constraints(instance, ub, ES, LS, start_id=len(m_var) + 1)
+    y_var = {}
+    reachable = compute_reachable(instance)
+    c43 = precedence_constraints(instance, m_var, x_var, s_var, ES, LS, ub)
+    c44 = setup_and_non_overlap(instance, m_var, x_var, s_var, y_var, next_id, ES, LS, ub, reachable)
+    c45 = assembly_constraints(instance, m_var, x_var, s_var, y_var, next_id, ES, LS, ub, reachable)
+    c46 = encode_cmax(instance, m_var, x_var, ub)
+    all_clauses = eo_clauses + time_clauses + c43 + c44 + c45 + c46
+
+    solver = Solver(name="cadical195", bootstrap_with=all_clauses)
+    t0 = time.perf_counter()
+    sat = solver.solve()
+    elapsed = time.perf_counter() - t0
+    result = ("UNSAT", None, len(all_clauses), elapsed)
+    if sat:
+        model = set(solver.get_model())
+        sol, dec_err = decode_solution(model, instance, m_var, x_var, s_var, ub)
+        result = ("SAT", (sol, dec_err, ES, LS), len(all_clauses), elapsed)
+    solver.delete()
+    return result
+
+
+def main(file_path=os.path.join("sm", "sm_0_2.json")):
+    t_total = time.perf_counter()
     instance = upgraded_parse_dataset(file_path)
     ub = get_ub(instance)
-    print(f"1. Upper Bound (UB) khởi tạo: {ub}")
-    ES, LS, domains = pre_processing(instance, ub)
-    print("2. Tiền xử lý hoàn tất (Đã tính ES, LS và Domain Reduction).")
-    eo_clauses, m_var = EO_operation(instance)
-    time_clauses, x_var, s_var, next_id = encode_time_constraints(instance, ub, start_id=len(m_var) + 1)
-    y_var = {}
 
-    c43 = precedence_constraints(instance, m_var, x_var, s_var, ub)
-    c44 = setup_and_non_overlap(instance, m_var, x_var, s_var, y_var, ub)
-    c45 = assembly_constraints(instance, m_var, x_var, s_var, y_var, ub)
-    c46 = encode_cmax(instance, m_var, x_var, ub)
+    best, solve_time = None, 0.0
+    while ub > 0:
+        status, payload, n_clauses, elapsed = build_and_solve(instance, ub)
+        solve_time += elapsed or 0.0              # chỉ cộng thời gian solver.solve()
+        if status != "SAT":
+            break
+        sol, dec_err, ES, LS = payload
+        if dec_err:
+            print("!! Decode lỗi:", dec_err)
+            break
+        ok, errs, cmax = verify_solution(instance, sol, ub, ES, LS)
+        if not ok:
+            print("!! Lịch không hợp lệ:", errs)
+            break
+        best = (sol, cmax)
+        ub = cmax - 1
 
-    all_clauses = eo_clauses + time_clauses + c43 + c44 + c45 + c46
-    print(f"3. Sinh tổng cộng {len(all_clauses)} mệnh đề CNF.")
+    total_time = time.perf_counter() - t_total    # gồm parse + sinh CNF + giải
 
-    solver = Solver(name='cadical195')
-    for clause in all_clauses:
-        solver.add_clause(clause)
+    # in chi tiết lịch (có thể comment lại nếu chạy hàng loạt)
+    if best:
+        for op, s in best[0].items():
+            print(f"[{op:20s}] Máy: {str(s['machine']):12s} Start: {s['start']:4d} Finish: {s['end']:4d}")
 
-    start_time = time.perf_counter()
-    is_sat = solver.solve()
-    exec_time = time.perf_counter() - start_time
-
-    print("\n==================================================")
-    if is_sat:
-        model = set(solver.get_model())
-        print(f"TRẠNG THÁI: TÌM THẤY LỊCH TRÌNH KHẢ THI (SAT)")
-        print(f"Thời gian giải SAT Solver: {exec_time:.2f} giây")
-        print("--------------------------------------------------")
-
-        cmax_actual = 0
-        for op in instance["operations"]:
-            assigned_m = next((m for m in instance["eligible_machines"][op] if m_var[(op, m)] in model), None)
-
-            start_t = next((t for t in range(ub + 1) if s_var[(op, t)] in model), None)
-
-            p_time = instance["processing_times"][op].get(assigned_m, 0) if assigned_m else 0
-            finish_t = start_t + p_time if start_t is not None else None
-
-            if finish_t:
-                cmax_actual = max(cmax_actual, finish_t)
-
-            print(
-                f"[{op:20s}] -> Máy: {str(assigned_m):12s} | Start: {str(start_t):3s} | Process: {p_time:2d} | Finish: {str(finish_t):3s}")
-
-        print("--------------------------------------------------")
-        print(f"🎯 Makespan (Cmax) đạt được: {cmax_actual}")
-    else:
-        print("TRẠNG THÁI: VÔ NGHIỆM (UNSAT)")
-    print("==================================================")
-
-    solver.delete()
-
+    name = os.path.basename(file_path)
+    cmax_str = best[1] if best else "N/A"
+    print(f"RESULT | {name} | Makespan={cmax_str} | SAT_time={solve_time:.2f}s | Total_time={total_time:.2f}s")
+    return name, cmax_str, solve_time, total_time
 
 if __name__ == "__main__":
     main()
-
